@@ -237,7 +237,10 @@ def upload():
 @admin_required
 def delete_item(item_id):
     item = next((x for x in read_library() if x.get("id") == item_id), None)
-    if not item:abort(404)
+    if not item:
+    app.logger.warning("Delete lookup failed: item_id=%r; available_ids=%r",
+                       item_id, [x.get("id") for x in read_library()])
+    abort(404)
     try:
         cloudinary.uploader.destroy(item["stored_name"], resource_type=item["resource_type"], invalidate=True)
     except Exception:
