@@ -9,7 +9,7 @@
     <section class="panel">
       <h2>Upload a file</h2>
       <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" class="admin-form upload-form">
-        <label for="file">Choose image, video, audio or document</label><input id="file" type="file" name="file" required>
+        <label for="file">Choose image, video, audio or document</label><input id="file" type="file" name="file" multiple required>
         <label for="display_name">Display name <span class="optional">(optional)</span></label><input id="display_name" name="display_name" maxlength="120" placeholder="e.g. Best cat meme">
         <label for="category">Category</label><select id="category" name="category">{% for cat in categories %}<option>{{ cat }}</option>{% endfor %}</select>
         <label for="tags">Search tags <span class="optional">(comma-separated)</span></label><input id="tags" name="tags" placeholder="cat, funny, reaction">
