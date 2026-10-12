@@ -172,8 +172,8 @@ def upload():
         flash("Choose at least one file.", "error")
         return redirect(url_for("admin"))
 
-    if len(files) > 25:
-        flash("Upload a maximum of 25 files at a time.", "error")
+    if len(files) > 500:
+        flash("Upload a maximum of 500 files at a time.", "error")
         return redirect(url_for("admin"))
 
     category = request.form.get("category", "Other")
