@@ -158,49 +158,79 @@ def admin():
     items = read_library()
     return render_template("admin.html", items=items)
 
+
 @app.route("/admin/upload", methods=["POST"])
 @admin_required
 def upload():
     if not cloud_ready():
-        flash("Cloud storage is not configured. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in Render.", "error")
+        flash("Cloud storage is not configured.", "error")
         return redirect(url_for("admin"))
-    uploaded = request.files.get("file")
-    name = (request.form.get("display_name") or "").strip()
+
+    files = [f for f in request.files.getlist("files") if f and f.filename]
+
+    if not files:
+        flash("Choose at least one file.", "error")
+        return redirect(url_for("admin"))
+
+    if len(files) > 25:
+        flash("Upload a maximum of 25 files at a time.", "error")
+        return redirect(url_for("admin"))
+
     category = request.form.get("category", "Other")
+    if category not in ALLOWED_CATEGORIES:
+        category = "Other"
+
     tags_raw = request.form.get("tags", "")
-    if not uploaded or not uploaded.filename:
-        flash("Choose a file first.", "error"); return redirect(url_for("admin"))
-    original_name = secure_filename(uploaded.filename)
-    if not original_name:
-        flash("That filename is not supported.", "error"); return redirect(url_for("admin"))
-    ext = Path(original_name).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        flash("File type not allowed.", "error"); return redirect(url_for("admin"))
-    if category not in ALLOWED_CATEGORIES: category = "Other"
-    mime = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
-    if mime.startswith("image/"): resource_type = "image"
-    elif mime.startswith("video/") or mime.startswith("audio/"): resource_type = "video"
-    else: resource_type = "raw"
-    display_name = (name or uploaded.filename)[:120]
-    search_tags = [x.strip()[:40] for x in tags_raw.split(",") if x.strip()][:12]
-    public_id = "vault_" + secrets.token_hex(16)
-    try:
-        result = cloudinary.uploader.upload(
-            uploaded.stream,
-            resource_type=resource_type,
-            public_id=public_id,
-            folder="vault-public-library",
-            tags=[CLOUDINARY_TAG, "category_" + category.lower().replace(" ", "_")],
-            context={"display_name": display_name, "category": category, "search_tags": ",".join(search_tags), "mime": mime},
-            overwrite=False,
-            use_filename=False,
-            unique_filename=False,
-        )
-    except Exception:
-        app.logger.exception("Cloudinary upload failed")
-        flash("Cloud upload failed. Check Render logs and Cloudinary usage limits.", "error")
-        return redirect(url_for("admin"))
-    flash("File uploaded to cloud storage.", "success")
+    tags = [x.strip()[:40] for x in tags_raw.split(",") if x.strip()][:12]
+
+    success = 0
+    failed = 0
+
+    for uploaded in files:
+        original_name = secure_filename(uploaded.filename)
+        if not original_name or Path(original_name).suffix.lower() not in ALLOWED_EXTENSIONS:
+            failed += 1
+            continue
+
+        mime = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+        if mime.startswith("image/"):
+            resource_type = "image"
+        elif mime.startswith(("video/", "audio/")):
+            resource_type = "video"
+        else:
+            resource_type = "raw"
+
+        try:
+            cloudinary.uploader.upload(
+                uploaded.stream,
+                resource_type=resource_type,
+                public_id="vault_" + secrets.token_hex(16),
+                folder="vault-public-library",
+                tags=[
+                    CLOUDINARY_TAG,
+                    "category_" + category.lower().replace(" ", "_")
+                ],
+                context={
+                    "display_name": original_name[:120],
+                    "category": category,
+                    "search_tags": ",".join(tags),
+                    "mime": mime
+                },
+                overwrite=False,
+                use_filename=False,
+                unique_filename=False,
+            )
+            success += 1
+        except Exception:
+            failed += 1
+            app.logger.exception("Upload failed for %s", original_name)
+
+    if success:
+        flash(f"Successfully uploaded {success} file(s).", "success")
+    if failed:
+        flash(f"{failed} file(s) failed or were unsupported.", "error")
+
     return redirect(url_for("admin"))
 
 @app.route("/admin/delete/<item_id>", methods=["POST"])
