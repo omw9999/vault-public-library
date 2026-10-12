@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vault — Public Library</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="menuButton" aria-label="Open categories">☰</button>
+    <a class="brand" href="{{ url_for('index') }}">vault<span>.</span></a>
+    <form class="search" action="{{ url_for('index') }}" method="get">
+      {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+      {% if selected_type %}<input type="hidden" name="type" value="{{ selected_type }}">{% endif %}
+      <input name="q" value="{{ q }}" placeholder="Search images, videos, files..." aria-label="Search library">
+      <button aria-label="Search">⌕</button>
+    </form>
+    <button class="theme-btn" id="themeButton" type="button" aria-label="Switch theme" title="Switch theme">☾</button>
+    <a class="admin-link" href="{{ url_for('admin_login') }}">Admin</a>
+  </header>
+
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><strong>Browse library</strong><button class="icon-btn" id="closeDrawer" aria-label="Close menu">×</button></div>
+    <a href="{{ url_for('index') }}">All files</a>
+    <a href="{{ url_for('index', type='images') }}">Images</a>
+    <a href="{{ url_for('index', type='videos') }}">Videos</a>
+    <a href="{{ url_for('index', type='files') }}">Files & documents</a>
+    <hr>
+    {% for cat in categories %}
+      <a href="{{ url_for('index', category=cat) }}">{{ cat }}</a>
+    {% endfor %}
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="wrap">
+    <section class="hero">
+      <p class="eyebrow">A PUBLIC DIGITAL LIBRARY</p>
+      <h1>Good stuff.<br><span>All in one place.</span></h1>
+      <p class="subhead">Browse, discover and download. No account needed.</p>
+      <div class="quick-links">
+        <a href="{{ url_for('index') }}" class="chip {% if not selected_type and not selected_category %}active{% endif %}">Everything</a>
+        <a href="{{ url_for('index', type='images') }}" class="chip {% if selected_type == 'images' %}active{% endif %}">Images</a>
+        <a href="{{ url_for('index', type='videos') }}" class="chip {% if selected_type == 'videos' %}active{% endif %}">Videos</a>
+        <a href="{{ url_for('index', type='files') }}" class="chip {% if selected_type == 'files' %}active{% endif %}">Files</a>
+      </div>
+    </section>
+
+    {% if selected_category or selected_type or q %}
+      <div class="section-head"><div><p class="eyebrow">FILTERED LIBRARY</p><h2>Search results</h2></div><a class="text-link" href="{{ url_for('index') }}">Clear filters ↗</a></div>
+    {% else %}
+      <div class="section-head"><div><p class="eyebrow">EXPLORE</p><h2>Browse categories</h2></div></div>
+      <div class="category-grid">
+        {% for cat, emoji, desc in [
+          ('Memes','😂','Internet classics'),
+          ('Funny','🐈','Things that make you laugh'),
+          ('Random Clicks','📸','Photos and moments'),
+          ('Informative','🧠','Useful things to know'),
+          ('Wallpapers','🌌','Make your screen yours'),
+          ('Nature','🌿','A little outside world')
+        ] %}
+        <a class="category-card" href="{{ url_for('index', category=cat) }}"><span class="cat-emoji">{{ emoji }}</span><span><strong>{{ cat }}</strong><small>{{ desc }}</small></span><span class="arrow">↗</span></a>
+        {% endfor %}
+      </div>
+      <div class="section-head recent-head"><div><p class="eyebrow">THE COLLECTION</p><h2>Recently added</h2></div><span class="count">{{ items|length }} item{% if items|length != 1 %}s{% endif %}</span></div>
+    {% endif %}
+
+    {% if items %}
+    <div class="asset-grid">
+      {% for item in items %}
+      <article class="asset-card">
+        <a class="preview" href="{{ url_for('uploaded_file', filename=item.stored_name) }}" target="_blank" rel="noopener">
+          {% if is_image(item) %}
+            <img src="{{ url_for('uploaded_file', filename=item.stored_name) }}" alt="{{ item.name }}" loading="lazy">
+          {% elif is_video(item) %}
+            <video src="{{ url_for('uploaded_file', filename=item.stored_name) }}" preload="metadata" muted></video><span class="play">▶</span>
+          {% elif is_audio(item) %}
+            <div class="file-preview audio">♫<small>AUDIO</small></div>
+          {% else %}
+            <div class="file-preview"><span class="file-icon">↧</span><small>{{ item.mime.split('/')[-1].upper() if '/' in item.mime else 'FILE' }}</small></div>
+          {% endif %}
+        </a>
+        <div class="asset-info">
+          <div class="asset-text"><strong title="{{ item.name }}">{{ item.name }}</strong><small>{{ item.category }} · {{ (item.size / 1024 / 1024)|round(2) }} MB</small></div>
+          <a class="download" href="{{ url_for('download_file', filename=item.stored_name) }}" title="Download {{ item.name }}" aria-label="Download {{ item.name }}">↓</a>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+      <div class="empty"><div class="empty-icon">⌁</div><h3>Nothing here yet</h3><p>{% if q %}Try a different search, or clear the filters.{% else %}Your library is ready for its first upload.{% endif %}</p><a href="{{ url_for('admin_login') }}" class="button">Upload the first file</a></div>
+    {% endif %}
+    <footer><span>vault. · Public library</span><span>Simple by design.</span></footer>
+  </main>
+  <script>
+    const drawer = document.getElementById('drawer');
+    const scrim = document.getElementById('scrim');
+    function openDrawer(){drawer.classList.add('open');scrim.classList.add('show');drawer.setAttribute('aria-hidden','false');}
+    function closeDrawer(){drawer.classList.remove('open');scrim.classList.remove('show');drawer.setAttribute('aria-hidden','true');}
+    document.getElementById('menuButton').addEventListener('click',openDrawer);
+    document.getElementById('closeDrawer').addEventListener('click',closeDrawer);
+    scrim.addEventListener('click',closeDrawer);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+    const themeButton = document.getElementById('themeButton');
+    function setTheme(theme){
+      document.documentElement.dataset.theme = theme;
+      themeButton.textContent = theme === 'dark' ? '☀' : '☾';
+      themeButton.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+      themeButton.setAttribute('aria-label', themeButton.title);
+    }
+    setTheme(localStorage.getItem('vault-theme') || 'light');
+    themeButton.addEventListener('click',()=>{
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('vault-theme', next);
+      setTheme(next);
+    });
+  </script>
+</body>
+</html>

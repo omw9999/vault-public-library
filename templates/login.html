@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin access — Vault</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="admin-body">
+  <header class="topbar"><a class="brand" href="{{ url_for('index') }}">vault<span>.</span></a><button class="theme-btn" id="themeButton" type="button" aria-label="Switch theme" title="Switch theme">☾</button><a class="admin-link" href="{{ url_for('index') }}">← Public library</a></header>
+  <main class="login-wrap">
+    <div class="login-card">
+      <div class="lock-icon">⌑</div><p class="eyebrow">PRIVATE AREA</p><h1>Admin access</h1><p class="muted">Sign in with the single admin password to manage this library.</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+      <form method="post" class="admin-form">
+        <label for="password">Admin password</label><input id="password" type="password" name="password" required autofocus placeholder="Enter password">
+        <button class="button full" type="submit">Unlock dashboard →</button>
+      </form>
+      <p class="tiny">Prototype note: change the default password before use.</p>
+    </div>
+  </main>
+<script>
+const themeButton=document.getElementById('themeButton');
+function setTheme(theme){document.documentElement.dataset.theme=theme;themeButton.textContent=theme==='dark'?'☀':'☾';themeButton.title=theme==='dark'?'Switch to light theme':'Switch to dark theme';themeButton.setAttribute('aria-label',themeButton.title);}
+setTheme(localStorage.getItem('vault-theme')||'light');
+themeButton.addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('vault-theme',next);setTheme(next);});
+</script></body>
+</html>

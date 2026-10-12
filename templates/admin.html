@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Manage library — Vault</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="admin-body">
+  <header class="topbar"><a class="brand" href="{{ url_for('index') }}">vault<span>.</span></a><div class="top-actions"><button class="theme-btn" id="themeButton" type="button" aria-label="Switch theme" title="Switch theme">☾</button><a class="admin-link" href="{{ url_for('index') }}">View public site ↗</a><form method="post" action="{{ url_for('admin_logout') }}"><button class="link-button">Log out</button></form></div></header>
+  <main class="wrap admin-wrap">
+    <section class="admin-intro"><p class="eyebrow">CONTROL ROOM</p><h1>Manage your library.</h1><p class="subhead">Upload a file, assign a category and it appears on the public site.</p></section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="panel">
+      <h2>Upload a file</h2>
+      <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" class="admin-form upload-form">
+        <label for="file">Choose image, video, audio or document</label><input id="file" type="file" name="file" required>
+        <label for="display_name">Display name <span class="optional">(optional)</span></label><input id="display_name" name="display_name" maxlength="120" placeholder="e.g. Best cat meme">
+        <label for="category">Category</label><select id="category" name="category">{% for cat in categories %}<option>{{ cat }}</option>{% endfor %}</select>
+        <label for="tags">Search tags <span class="optional">(comma-separated)</span></label><input id="tags" name="tags" placeholder="cat, funny, reaction">
+        <p class="tiny">Prototype accepts common image, video, audio, archive and office file formats. Maximum upload size: configured in app.py (default 200 MB).</p>
+        <button class="button" type="submit">↑ Upload to library</button>
+      </form>
+    </section>
+    <div class="section-head"><div><p class="eyebrow">YOUR COLLECTION</p><h2>Uploaded files</h2></div><span class="count">{{ items|length }} total</span></div>
+    {% if items %}
+    <div class="manage-list">
+      {% for item in items %}
+      <div class="manage-row">
+        <div class="mini-preview">
+          {% if is_image(item) %}<img src="{{ url_for('uploaded_file', filename=item.stored_name) }}" alt="">
+          {% elif is_video(item) %}<span>▶</span>
+          {% else %}<span>↧</span>{% endif %}
+        </div>
+        <div class="manage-details"><strong>{{ item.name }}</strong><small>{{ item.category }} · {{ (item.size / 1024 / 1024)|round(2) }} MB</small></div>
+        <form method="post" action="{{ url_for('delete_item', item_id=item.id) }}" onsubmit="return confirm('Delete this file permanently?')"><button class="delete-btn" type="submit">Delete</button></form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty compact"><h3>No uploads yet</h3><p>Upload your first file above.</p></div>{% endif %}
+    <footer><span>vault. · Admin</span><span>Keep your password private.</span></footer>
+  </main>
+<script>
+const themeButton=document.getElementById('themeButton');
+function setTheme(theme){document.documentElement.dataset.theme=theme;themeButton.textContent=theme==='dark'?'☀':'☾';themeButton.title=theme==='dark'?'Switch to light theme':'Switch to dark theme';themeButton.setAttribute('aria-label',themeButton.title);}
+setTheme(localStorage.getItem('vault-theme')||'light');
+themeButton.addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('vault-theme',next);setTheme(next);});
+</script></body>
+</html>
