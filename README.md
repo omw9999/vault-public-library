@@ -1,50 +1,225 @@
-# Vault — Public Library Prototype
+import os
+import secrets
+import mimetypes
+from pathlib import Path
+from functools import wraps
+from datetime import datetime, timezone
+from urllib.parse import quote
 
-A small Flask website for a public, no-account file library.
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+from flask import Flask, render_template, request, redirect, url_for, abort, session, flash
+from werkzeug.utils import secure_filename
 
-## Features
-- Public gallery with no visitor login or registration
-- Drawer menu with categories and Images / Videos / Files filters
-- Search by display name, category, and tags
-- Image and video previews
-- Download buttons
-- Light/dark theme toggle (preference saved in the browser)
-- One private admin password for uploading and deleting
-- No user database; metadata is stored in `library.json`
-- Files are stored locally in `uploads/` in this prototype
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-this-password")
+MAX_MB = int(os.environ.get("MAX_UPLOAD_MB", "100"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
 
-## Run on Windows
+CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
+API_KEY = os.environ.get("CLOUDINARY_API_KEY", "").strip()
+API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
+CLOUDINARY_TAG = "vault-public-library"
+if CLOUD_NAME and API_KEY and API_SECRET:
+    cloudinary.config(cloud_name=CLOUD_NAME, api_key=API_KEY, api_secret=API_SECRET, secure=True)
 
-1. Install Python 3.10+ from https://www.python.org/downloads/ (enable "Add Python to PATH").
-2. Extract this ZIP.
-3. Open Command Prompt in the extracted `public_library_prototype` folder.
-4. Run:
+ALLOWED_CATEGORIES = [
+    "Memes", "Funny", "Random Clicks", "Informative",
+    "Wallpapers", "Nature", "Videos", "Documents", "Other"
+]
+ALLOWED_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+    ".mp4", ".webm", ".mov", ".m4v",
+    ".pdf", ".txt", ".zip", ".rar", ".7z",
+    ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+    ".mp3", ".wav", ".ogg"
+}
 
-   ```bat
-   py -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   set ADMIN_PASSWORD=make-a-long-private-password
-   set FLASK_SECRET_KEY=replace-with-a-long-random-secret
-   py app.py
-   ```
+def cloud_ready():
+    return bool(CLOUD_NAME and API_KEY and API_SECRET)
 
-5. Open http://127.0.0.1:5000
-6. Open http://127.0.0.1:5000/admin/login to upload files.
+def is_image(item):
+    return item.get("mime", "").startswith("image/")
+def is_video(item):
+    return item.get("mime", "").startswith("video/")
+def is_audio(item):
+    return item.get("mime", "").startswith("audio/")
+def is_admin():
+    return session.get("is_admin") is True
 
-Default password if you skip setting `ADMIN_PASSWORD`: `change-this-password`.
-Do not use that default password on an internet-facing deployment.
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not is_admin():
+            return redirect(url_for("admin_login", next=request.path))
+        return fn(*args, **kwargs)
+    return wrapper
 
-## Important: cloud storage
+@app.context_processor
+def inject_helpers():
+    return dict(is_image=is_image, is_video=is_video, is_audio=is_audio, categories=ALLOWED_CATEGORIES)
 
-This is a working local prototype, not yet connected to cloud object storage. Uploaded files are written to the `uploads/` folder on the computer running Flask. They will not automatically be available publicly on the internet, and some hosting providers erase local files on redeploy/restart.
+def _context_value(resource, key, default=""):
+    context = resource.get("context") or {}
+    custom = context.get("custom") or {}
+    return custom.get(key, default)
 
-To make it a real cloud-hosted library, deploy the frontend/backend and replace the local file save/read/delete operations with a cloud object-storage provider (for example Cloudinary for image/video media or an S3-compatible object-storage service for mixed file types). Keep cloud credentials server-side only. Do not put storage API secrets in frontend JavaScript.
+def read_library():
+    """Read metadata from Cloudinary itself; no user database or local manifest."""
+    if not cloud_ready():
+        return []
+    items = []
+    for resource_type in ("image", "video", "raw"):
+        cursor = None
+        while True:
+            params = {"resource_type": resource_type, "max_results": 100, "tags": True, "context": True}
+            if cursor:
+                params["next_cursor"] = cursor
+            try:
+                result = cloudinary.api.resources_by_tag(CLOUDINARY_TAG, **params)
+            except Exception as exc:
+                app.logger.exception("Cloudinary listing failed: %s", exc)
+                return items
+            for resource in result.get("resources", []):
+                context = resource.get("context") or {}
+                custom = context.get("custom") or {}
+                fmt = resource.get("format", "")
+                name = custom.get("display_name") or resource.get("public_id", "file")
+                mime = custom.get("mime") or mimetypes.guess_type(name)[0] or ("application/octet-stream" if resource_type == "raw" else f"{resource_type}/{fmt}")
+                category = custom.get("category", "Other")
+                tags_text = custom.get("search_tags", "")
+                stored_name = resource.get("public_id", "")
+                items.append({
+                    "id": f"{resource_type}:{stored_name}",
+                    "stored_name": stored_name,
+                    "resource_type": resource_type,
+                    "name": name,
+                    "category": category if category in ALLOWED_CATEGORIES else "Other",
+                    "tags": [x for x in tags_text.split(",") if x],
+                    "mime": mime,
+                    "size": int(resource.get("bytes", 0)),
+                    "uploaded_at": resource.get("created_at", ""),
+                    "url": resource.get("secure_url", ""),
+                })
+            cursor = result.get("next_cursor")
+            if not cursor:
+                break
+    items.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return items
 
-## Safety / production notes
-- Use HTTPS and a production WSGI server such as Waitress on Windows or Gunicorn on Linux; don't expose Flask's development server directly to the internet.
-- Set a strong `ADMIN_PASSWORD` and `FLASK_SECRET_KEY` environment variable.
-- Add rate limiting, upload quotas, file signature/content validation, malware scanning, CSRF protection, and backups before public deployment.
-- Uploaded files are public by design. Only upload content you have rights to share.
-- Maximum upload size defaults to 200 MB (`MAX_UPLOAD_MB`).
-- Accepted file extensions are defined by `ALLOWED_EXTENSIONS` in `app.py`.
+@app.route("/")
+def index():
+    items = read_library()
+    q = request.args.get("q", "").strip().lower()
+    category = request.args.get("category", "").strip()
+    kind = request.args.get("type", "").strip()
+    if category and category != "All":
+        items = [x for x in items if x.get("category") == category]
+    if kind == "images": items = [x for x in items if is_image(x)]
+    elif kind == "videos": items = [x for x in items if is_video(x)]
+    elif kind == "files": items = [x for x in items if not is_image(x) and not is_video(x)]
+    if q:
+        items = [x for x in items if q in " ".join([x.get("name", ""), x.get("category", ""), " ".join(x.get("tags", []))]).lower()]
+    return render_template("index.html", items=items, q=q, selected_category=category, selected_type=kind)
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    item = next((x for x in read_library() if x.get("stored_name") == filename), None)
+    if not item or not item.get("url"): abort(404)
+    return redirect(item["url"], code=302)
+
+@app.route("/download/<path:filename>")
+def download_file(filename):
+    item = next((x for x in read_library() if x.get("stored_name") == filename), None)
+    if not item or not item.get("url"): abort(404)
+    # Cloudinary serves the stored asset. The browser may preview some media types.
+    return redirect(item["url"], code=302)
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if secrets.compare_digest(password, ADMIN_PASSWORD):
+            session.clear(); session["is_admin"] = True
+            return redirect(url_for("admin"))
+        flash("Incorrect password.", "error")
+    return render_template("login.html")
+
+@app.route("/admin/logout", methods=["POST"])
+def admin_logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+@app.route("/admin")
+@admin_required
+def admin():
+    items = read_library()
+    return render_template("admin.html", items=items)
+
+@app.route("/admin/upload", methods=["POST"])
+@admin_required
+def upload():
+    if not cloud_ready():
+        flash("Cloud storage is not configured. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in Render.", "error")
+        return redirect(url_for("admin"))
+    uploaded = request.files.get("file")
+    name = (request.form.get("display_name") or "").strip()
+    category = request.form.get("category", "Other")
+    tags_raw = request.form.get("tags", "")
+    if not uploaded or not uploaded.filename:
+        flash("Choose a file first.", "error"); return redirect(url_for("admin"))
+    original_name = secure_filename(uploaded.filename)
+    if not original_name:
+        flash("That filename is not supported.", "error"); return redirect(url_for("admin"))
+    ext = Path(original_name).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        flash("File type not allowed.", "error"); return redirect(url_for("admin"))
+    if category not in ALLOWED_CATEGORIES: category = "Other"
+    mime = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+    if mime.startswith("image/"): resource_type = "image"
+    elif mime.startswith("video/") or mime.startswith("audio/"): resource_type = "video"
+    else: resource_type = "raw"
+    display_name = (name or uploaded.filename)[:120]
+    search_tags = [x.strip()[:40] for x in tags_raw.split(",") if x.strip()][:12]
+    public_id = "vault_" + secrets.token_hex(16)
+    try:
+        result = cloudinary.uploader.upload(
+            uploaded.stream,
+            resource_type=resource_type,
+            public_id=public_id,
+            folder="vault-public-library",
+            tags=[CLOUDINARY_TAG, "category_" + category.lower().replace(" ", "_")],
+            context={"display_name": display_name, "category": category, "search_tags": ",".join(search_tags), "mime": mime},
+            overwrite=False,
+            use_filename=False,
+            unique_filename=False,
+        )
+    except Exception:
+        app.logger.exception("Cloudinary upload failed")
+        flash("Cloud upload failed. Check Render logs and Cloudinary usage limits.", "error")
+        return redirect(url_for("admin"))
+    flash("File uploaded to cloud storage.", "success")
+    return redirect(url_for("admin"))
+
+@app.route("/admin/delete/<item_id>", methods=["POST"])
+@admin_required
+def delete_item(item_id):
+    item = next((x for x in read_library() if x.get("id") == item_id), None)
+    if not item: abort(404)
+    try:
+        cloudinary.uploader.destroy(item["stored_name"], resource_type=item["resource_type"], invalidate=True)
+    except Exception:
+        app.logger.exception("Cloudinary delete failed")
+        flash("Could not delete this cloud file. Check Render logs.", "error")
+        return redirect(url_for("admin"))
+    flash("File deleted from cloud storage.", "success")
+    return redirect(url_for("admin"))
+
+@app.errorhandler(413)
+def too_large(_):
+    return "Upload too large. Increase MAX_UPLOAD_MB if your cloud plan supports it.", 413
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5000")), debug=False)
