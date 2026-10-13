@@ -72,48 +72,95 @@ def _context_value(resource, key, default=""):
     custom = context.get("custom") or {}
     return custom.get(key, default)
 
+
 def read_library():
-    """Read metadata from Cloudinary itself; no user database or local manifest."""
+    """Return cached library data and refresh only when needed."""
+    global LIBRARY_CACHE, LIBRARY_CACHE_TIME
+
+    now = datetime.now(timezone.utc).timestamp()
+
+    # Reuse the last successful listing for five minutes.
+    if LIBRARY_CACHE and now - LIBRARY_CACHE_TIME < LIBRARY_CACHE_TTL:
+        return [item.copy() for item in LIBRARY_CACHE]
+
     if not cloud_ready():
-        return []
+        return [item.copy() for item in LIBRARY_CACHE]
+
     items = []
+
     for resource_type in ("image", "video", "raw"):
         cursor = None
+
         while True:
-            params = {"resource_type": resource_type, "max_results": 100, "tags": True, "context": True}
+            params = {
+                "resource_type": resource_type,
+                "max_results": 100,
+                "tags": True,
+                "context": True,
+            }
             if cursor:
                 params["next_cursor"] = cursor
+
             try:
-                result = cloudinary.api.resources_by_tag(CLOUDINARY_TAG, **params)
-            except Exception as exc:
-                app.logger.exception("Cloudinary listing failed: %s", exc)
-                return items
+                result = cloudinary.api.resources_by_tag(
+                    CLOUDINARY_TAG, **params
+                )
+            except Exception:
+                app.logger.exception(
+                    "Cloudinary listing failed for %s", resource_type
+                )
+                # Never replace a good cache with partial results.
+                return [item.copy() for item in LIBRARY_CACHE]
+
             for resource in result.get("resources", []):
                 context = resource.get("context") or {}
                 custom = context.get("custom") or {}
                 fmt = resource.get("format", "")
-                name = custom.get("display_name") or resource.get("public_id", "file")
-                mime = custom.get("mime") or mimetypes.guess_type(name)[0] or ("application/octet-stream" if resource_type == "raw" else f"{resource_type}/{fmt}")
+                stored_name = resource.get("public_id", "")
+                name = custom.get("display_name") or stored_name or "file"
+
+                mime = (
+                    custom.get("mime")
+                    or mimetypes.guess_type(name)[0]
+                    or (
+                        "application/octet-stream"
+                        if resource_type == "raw"
+                        else f"{resource_type}/{fmt}"
+                    )
+                )
+
                 category = custom.get("category", "Other")
                 tags_text = custom.get("search_tags", "")
-                stored_name = resource.get("public_id", "")
+
                 items.append({
                     "id": f"{resource_type}:{stored_name}",
                     "stored_name": stored_name,
                     "resource_type": resource_type,
                     "name": name,
-                    "category": category if category in ALLOWED_CATEGORIES else "Other",
+                    "category": (
+                        category
+                        if category in ALLOWED_CATEGORIES
+                        else "Other"
+                    ),
                     "tags": [x for x in tags_text.split(",") if x],
                     "mime": mime,
                     "size": int(resource.get("bytes", 0)),
                     "uploaded_at": resource.get("created_at", ""),
                     "url": resource.get("secure_url", ""),
                 })
+
             cursor = result.get("next_cursor")
             if not cursor:
                 break
+
     items.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
-    return items
+
+    # Update the cache only after every resource type was fetched.
+    LIBRARY_CACHE = items
+    LIBRARY_CACHE_TIME = now
+
+    return [item.copy() for item in LIBRARY_CACHE]
+
 
 @app.route("/")
 def index():
