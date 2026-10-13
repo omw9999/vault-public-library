@@ -22,6 +22,12 @@ CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME", "").strip()
 API_KEY = os.environ.get("CLOUDINARY_API_KEY", "").strip()
 API_SECRET = os.environ.get("CLOUDINARY_API_SECRET", "").strip()
 CLOUDINARY_TAG = "vault-public-library"
+
+# Cache the last complete Cloudinary library listing.
+LIBRARY_CACHE = []
+LIBRARY_CACHE_TIME = 0
+LIBRARY_CACHE_TTL = 300  # 5 minutes
+
 if CLOUD_NAME and API_KEY and API_SECRET:
     cloudinary.config(cloud_name=CLOUD_NAME, api_key=API_KEY, api_secret=API_SECRET, secure=True)
 
